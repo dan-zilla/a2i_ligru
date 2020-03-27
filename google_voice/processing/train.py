@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function
 import os, sys, pdb, pickle
 from multiprocessing import Process, Pool
 import math, time
-from sets import Set
+#from sets import Set
 
 import numpy as np
 import scipy.io.wavfile as wav
@@ -17,11 +17,14 @@ import torch.nn as nn
 import pdb
 
 #os.environ['CUDA_VISIBLE_DEVICES']=''
-device = torch.device('cuda')
+device = torch.device('cuda:1')
+torch.set_num_threads(12);
 
 model_dir = './models/'
 data_folder = '../outfiles/'
-data_version = 'processed-mlab_tdfilt_tdmix_abs' #'processed-12_mel_noisy'
+# data_version = 'processed-mlab_tdfilt_tdmix_abs' #'processed-12_mel_noisy'
+data_version = 'processed-12_mel_noiseless'
+# data_version = 'processed-12_mel_noisy'
 
 ######### Load Data ########
 with open(data_folder + data_version + '_ys.pkl', 'rb') as f:
@@ -110,6 +113,9 @@ def lrf(epoch):
         if epoch < jumps[i]: return (1 + np.cos(np.pi * (epoch - jumps[i-1]) / (jumps[i] - jumps[i-1]))) / 2
     return 1e-6
 plt.plot(np.arange(100), np.vectorize(lrf)(np.arange(100)))
+# from IPython import embed
+# embed()
+# exit()
 plt.show()
 
 ####### Define Network #########
@@ -165,7 +171,7 @@ epochs = 100
 batch_size = 256
 iters  = (Xtr.shape[0] + batch_size - 1) // batch_size
 
-v = 1
+v = 2
 model_F_file = model_dir + 'save_%03d.pt'%v
 
 lr = 1e-3
@@ -176,6 +182,11 @@ scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lrf)
 
 best_acc = 0
 hist = {'TrLoss':[], 'TrAcc':[], 'VaLoss':[], 'VaAcc':[]}
+
+# from IPython import embed
+# embed()
+# exit()
+
 for epoch in range(epochs):
     scheduler.step()
     cur_samp = 0

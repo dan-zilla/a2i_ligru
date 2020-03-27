@@ -2,22 +2,22 @@ from __future__ import absolute_import, division, print_function
 import os, sys, pdb, pickle
 from multiprocessing import Pool
 import numpy as np
-import samplerate
+import scikits.samplerate as samplerate
 import scipy.io.wavfile as wav
 import scipy.signal as sig
 import matplotlib.pyplot as plt
 np.seterr(all='raise')
 
-from sets import Set
+# from sets import Set
 
 # INPUT DIRECTORIES
-train_data_dir = '../speech_commands_v0.01/'
+train_data_dir = '/data/speech_commands_v0.01/'
 test_data_dir = '../test_real/'
 sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
 data_folder = '../outfiles/'
-data_version = 'processed-12_mel_noisy'
+data_version = 'processed-12_mel_noiseless'
 
 #### Standard Spectrogram #####
 fnames = [
@@ -93,12 +93,12 @@ def conv_wav_to_img(data):
     filter_banks = filter_banks[2:]
     return filter_banks.astype('f4').T
 
-#plt.figure(figsize=(20, 12))
-#for i in range(6):
-#    plt.subplot(3,2,i+1)
-#    plt.imshow(conv_wav_to_img(wav.read(train_data_dir + fnames[i])[1]), interpolation='nearest', origin='lower')
-#    plt.title('Mel ' + fnames[i])
-#plt.show()
+plt.figure(figsize=(20, 12))
+for i in range(6):
+   plt.subplot(3,2,i+1)
+   plt.imshow(conv_wav_to_img(wav.read(train_data_dir + fnames[i])[1]), interpolation='nearest', origin='lower')
+   plt.title('Mel ' + fnames[i])
+plt.show()
 
 ######## Background Noise for Data Augmentation #######
 bg_noise = [ wav.read(train_data_dir + '_background_noise_/%s'%fname)[1] for fname in os.listdir(train_data_dir + '_background_noise_') if fname.split('.')[-1] == 'wav' ]
@@ -158,17 +158,17 @@ vals_raw = open(train_data_dir + 'validation_list.txt', 'r').readlines()
 va = {}
 for fname in vals_raw:
     fsplit = fname.replace('/', '_').split('_')
-    if fsplit[0] not in va: va[fsplit[0]] = Set()
+    if fsplit[0] not in va: va[fsplit[0]] = set()
     va[fsplit[0]].add(fsplit[1])
 
 tests_raw = open(train_data_dir + 'testing_list.txt', 'r').readlines()
 te = {}
 for fname in tests_raw:
     fsplit = fname.replace('/', '_').split('_')
-    if fsplit[0] not in te: te[fsplit[0]] = Set()
+    if fsplit[0] not in te: te[fsplit[0]] = set()
     te[fsplit[0]].add(fsplit[1])
 
-size_multiplier = 5
+size_multiplier = 1
 unknown = ['seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
 classes = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', 'unknown', 'silent']
 
@@ -206,7 +206,7 @@ def get_silent(i):
     return xs
 
 if __name__ == "__main__":
-    pool = Pool(8)
+    pool = Pool(1)
     Xtr = []
     Xva = []
     Xte = []
@@ -282,6 +282,7 @@ if __name__ == "__main__":
             print('On Training (total %d)'%(size_multiplier * len(fnames_tr)))
             sys.stdout.flush()
             xsa = pool.map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
+            # xsa = map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
             xsf = [x for xs in xsa for x in xs]
             Xtr += xsf
             ytr += [i] * len(xsf)

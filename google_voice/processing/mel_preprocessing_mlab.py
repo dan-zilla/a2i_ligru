@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function
 import os, sys, pdb, pickle
 from multiprocessing import Pool
 import numpy as np
-import samplerate
+import scikits.samplerate as samplerate
 import scipy.io.wavfile as wav
 import scipy.signal as sig
 import matplotlib.pyplot as plt
@@ -10,15 +10,15 @@ import csv
 import pdb
 np.seterr(all='raise')
 
-from sets import Set
+# from sets import Set
 
 # INPUT DIRECTORIES
-train_data_dir = '../speech_commands_v0.01/'
+train_data_dir = '/data/workspace/danvilla/speech_commands_v0.01/'
 test_data_dir = '../test_real/'
 sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
-data_folder = '../outfiles/'
+data_folder = '../outfiles_td/'
 data_version = 'processed-mlab_tdfilt_tdmix_abs'
 
 #### Standard Spectrogram #####
@@ -92,7 +92,7 @@ def conv_csv_to_img(filename):
     spectrogram = []
     if '\0' in open(filename).read():
         print("wtf " + filename)
-    with open(filename, 'rb') as csv_file:
+    with open(filename, 'rt') as csv_file:
         csv_obj = csv.reader(csv_file)
         for row in csv_obj:
             spectrogram.append(row)
@@ -113,14 +113,14 @@ vals_raw = open(train_data_dir + 'validation_list_mlab.txt', 'r').readlines()
 va = {}
 for fname in vals_raw:
     fsplit = fname.replace('/', '_').split('_')
-    if fsplit[0] not in va: va[fsplit[0]] = Set()
+    if fsplit[0] not in va: va[fsplit[0]] = set()
     va[fsplit[0]].add(fsplit[1])
 
 tests_raw = open(train_data_dir + 'testing_list_mlab.txt', 'r').readlines()
 te = {}
 for fname in tests_raw:
     fsplit = fname.replace('/', '_').split('_')
-    if fsplit[0] not in te: te[fsplit[0]] = Set()
+    if fsplit[0] not in te: te[fsplit[0]] = set()
     te[fsplit[0]].add(fsplit[1])
 
 size_multiplier = 5
@@ -262,7 +262,7 @@ if __name__ == "__main__":
     yva = np.array(yva)
     Xte = np.array(Xte).astype('f4')
     yte = np.array(yte)
-    pdb.set_trace()
+    # pdb.set_trace()
     with open(data_folder + data_version + '_Xtr.npy', 'wb') as f:
         np.save(f, Xtr)
     with open(data_folder + data_version + '_Xva.npy', 'wb') as f:
