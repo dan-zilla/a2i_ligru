@@ -17,7 +17,7 @@ sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
 data_folder = '../outfiles/'
-data_version = 'processed-12_mel_noiseless'
+data_version = 'processed-12_mel_noiseless_5bit_quant_env_64p0rms'
 
 #### Standard Spectrogram #####
 fnames = [
@@ -68,6 +68,12 @@ for m in range(1, nfilt + 1):
     for k in range(f_m, f_m_plus):
         fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
 
+# Automatic Gain Control
+TARGET_RMS = 64.0 # of full-scale = 1
+NORM_RMS = True
+B = 5 # quantization bits
+QUANT_FILT = True
+QUANT_SIG = False
 def conv_wav_to_img(data):
     data = data[:sample_rate].astype('f4')
     if len(data) < fs: data = np.pad(data, ((0, fs - len(data))), 'edge')
@@ -81,27 +87,70 @@ def conv_wav_to_img(data):
 
     indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
     frames = pad_signal[indices.astype(np.int32, copy=False)]
-    frames *= np.hamming(frame_length)
+    frames = (frames.T - np.mean(frames, axis=1)).T * np.hanning(frame_length)
 
-    mag_frames = np.absolute(np.fft.rfft(frames, NFFT))  # Magnitude of the FFT
-    pow_frames = ((1.0 / NFFT) * ((mag_frames) ** 2))  # Power Spectrum
-    
-    filter_banks = np.dot(pow_frames, fbank.T)
+    fft_frames = (1.0 / NFFT) * np.fft.rfft(frames, NFFT)
+
+    if QUANT_FILT:
+        quant_frames = np.finfo(float).eps * np.ones(((fft_frames.shape[1] - 1) * 2, nfilt, fft_frames.shape[0]))
+        quant_pow_frames = np.zeros((fft_frames.shape[0], nfilt))
+        bins = ((2 / 2 ** B) * np.arange(0, 2 ** B)) - 1
+        for i in range(fft_frames.shape[0]):
+            filt_frame_fft = NFFT * fft_frames[i,:] * fbank
+            filt_frame = np.fft.irfft(filt_frame_fft)
+            mean_frame = np.mean(sum(filt_frame))
+            quant_filt_frame = (2 / 2 ** B) * np.digitize(filt_frame.T, bins) - 1
+            mean_quant = np.mean(quant_filt_frame, axis=0)
+            quant_frames[:, :, i] = quant_filt_frame - mean_quant + mean_frame # maintain the mean (to avoid a biased estimator?)
+            # ------------------------# for debug
+            # x = quant_filt_frame
+            # y = quant_frames[:, :, i] # for debug
+            # z = filt_frame
+            # x_reconstructed = sum(x.T)
+            # y_reconstructed = sum(y.T)
+            # z_reconstructed = sum(z)
+            # plt.figure()
+            # plt.plot(x_reconstructed)
+            # plt.plot(y_reconstructed)
+            # plt.plot(z_reconstructed)
+            # plt.plot(frames[i, :])
+            # -----------------------#
+            quant_frame_fft = np.fft.rfft(quant_frames[:, :, i], axis=0) / NFFT
+            quant_pow_frames[i,:] = np.sum((np.absolute(quant_frame_fft))**2, 0)
+        filter_banks = quant_pow_frames
+    else:
+        mag_frames = np.absolute(fft_frames)  # Magnitude of the FFT
+        pow_frames = mag_frames ** 2  # Power Spectrum
+        filter_banks = np.dot(pow_frames, fbank.T)
+        # bins = ((1 / 2 ** B) * np.arange(0, 2 ** B)) - 1
+        # filter_banks = np.digitize(filter_banks, bins)
     filter_banks = np.where(filter_banks == 0, np.finfo(float).eps, filter_banks)  # Numerical Stability
-    filter_banks = 20 * np.log10(filter_banks)  # dB
+    filter_banks = 10 * np.log10(filter_banks)  # dB
     #filter_banks = np.sqrt(filter_banks)
     filter_banks = filter_banks[2:]
     return filter_banks.astype('f4').T
 
+
+def get_wav(file):
+    waveform_int = wav.read(file)[1] # / 2**15
+    # clip_rms = np.sqrt(np.sum(waveform**2) / len(waveform))
+    # waveform = target_rms / clip_rms * waveform
+    # waveform = np.bitwise_and(waveform, 0b1111111100000000, dtype=np.int16) # https://stackoverflow.com/questions/47762432/fast-way-to-quantize-numpy-vectors
+    waveform = (waveform_int & -0b100000) / 2**15 if QUANT_SIG else waveform_int / 2 ** 15 # TODO: make this programmatic with B
+    waveform = (waveform / np.sqrt(np.sum(waveform ** 2 / len(waveform))) * TARGET_RMS) if NORM_RMS else waveform
+    return waveform
+
+
 plt.figure(figsize=(20, 12))
 for i in range(6):
-   plt.subplot(3,2,i+1)
-   plt.imshow(conv_wav_to_img(wav.read(train_data_dir + fnames[i])[1]), interpolation='nearest', origin='lower')
-   plt.title('Mel ' + fnames[i])
+    # i=1 # debug
+    plt.subplot(3,2,i+1)
+    plt.imshow(conv_wav_to_img(get_wav(train_data_dir + fnames[i])), interpolation='nearest', origin='lower')
+    plt.title('Mel ' + fnames[i])
 plt.show()
 
 ######## Background Noise for Data Augmentation #######
-bg_noise = [ wav.read(train_data_dir + '_background_noise_/%s'%fname)[1] for fname in os.listdir(train_data_dir + '_background_noise_') if fname.split('.')[-1] == 'wav' ]
+bg_noise = [ get_wav(train_data_dir + '_background_noise_/%s'%fname) for fname in os.listdir(train_data_dir + '_background_noise_') if fname.split('.')[-1] == 'wav' ]
 def get_random_background():
     if np.random.uniform() < 0.1: return np.zeros(fs)
     data = bg_noise[np.random.choice(len(bg_noise))]
@@ -177,9 +226,10 @@ def get_train(x):
     print('\rOn %d'%(i+1), end='')
     sys.stdout.flush()
     xs = []
-    xs.append(conv_wav_to_img(wav.read(fname)[1]))
+    waveform = get_wav(fname)
+    xs.append(conv_wav_to_img(waveform))
     for j in range(size_multiplier - 1):
-        xs.append(conv_wav_to_img_noisy(wav.read(fname)[1]))
+        xs.append(conv_wav_to_img_noisy(waveform))
     return xs
 
 def get_unknown(x):
@@ -189,10 +239,11 @@ def get_unknown(x):
     pcur = size_multiplier / 20
     xs = []
     if np.random.uniform() > pcur: return xs
-    xs.append(conv_wav_to_img(wav.read(fname)[1]))
+    waveform = get_wav(fname)
+    xs.append(conv_wav_to_img(waveform))
     pcur -= 1
     while np.random.uniform() <= pcur:
-        xs.append(conv_wav_to_img_noisy(wav.read(fname)[1]))
+        xs.append(conv_wav_to_img_noisy(waveform))
         pcur -= 1
     return xs
 
@@ -206,7 +257,7 @@ def get_silent(i):
     return xs
 
 if __name__ == "__main__":
-    pool = Pool(1)
+    pool = Pool(12)
     Xtr = []
     Xva = []
     Xte = []
@@ -231,6 +282,7 @@ if __name__ == "__main__":
                 print('On Training (total %d)'%(len(fnames_tr)))
                 sys.stdout.flush()
                 xsa = pool.map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(cl, fname), fnames_tr)))
+                # xsa = map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s' % (cl, fname), fnames_tr)))
                 xsf = [x for xs in xsa for x in xs]
                 Xtr += xsf
                 ytr += [i] * len(xsf)
@@ -238,13 +290,13 @@ if __name__ == "__main__":
                 for ix, fname in enumerate(fnames_va):
                     print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
                     if np.random.uniform() > 1/20: continue
-                    Xva.append(conv_wav_to_img(wav.read(train_data_dir + '%s/%s'%(cl, fname))[1]))
+                    Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
                     yva.append(i)
                 print()
                 for ix, fname in enumerate(fnames_te):
                     print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
                     if np.random.uniform() > 1/20: continue
-                    Xte.append(conv_wav_to_img(wav.read(train_data_dir + '%s/%s'%(cl, fname))[1]))
+                    Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
                     yte.append(i)
                 print()
         elif c == 'silent':
@@ -289,12 +341,12 @@ if __name__ == "__main__":
             print()
             for ix, fname in enumerate(fnames_va):
                 print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
-                Xva.append(conv_wav_to_img(wav.read(train_data_dir + '%s/%s'%(c, fname))[1]))
+                Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
                 yva.append(i)
             print()
             for ix, fname in enumerate(fnames_te):
                 print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
-                Xte.append(conv_wav_to_img(wav.read(train_data_dir + '%s/%s'%(c, fname))[1]))
+                Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
                 yte.append(i)
             print()
         print()

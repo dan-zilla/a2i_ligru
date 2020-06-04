@@ -1,29 +1,26 @@
 from __future__ import absolute_import, division, print_function
-import os, sys, pdb, pickle
-from multiprocessing import Process, Pool
-import math, time
+import os, pickle
+import time
 #from sets import Set
 
 import numpy as np
-import scipy.io.wavfile as wav
-import scipy.signal as sig
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
 
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-import pdb
+os.environ['CUDA_VISIBLE_DEVICES']='1'
+# from google_voice.processing.a2i_helper import run_eval
+import a2i_helper
 
-#os.environ['CUDA_VISIBLE_DEVICES']=''
-device = torch.device('cuda:1')
+device = torch.device('cuda')
 torch.set_num_threads(12);
 
 model_dir = './models/'
 data_folder = '../outfiles/'
-# data_version = 'processed-mlab_tdfilt_tdmix_abs' #'processed-12_mel_noisy'
-data_version = 'processed-12_mel_noiseless'
+# data_version = 'processed-mlab_chip16_12class_aug' #'processed-12_mel_noisy'
+data_version = 'processed-12_mel_noiseless_8bit_quant_env_20p0rms'
 # data_version = 'processed-12_mel_noisy'
 
 ######### Load Data ########
@@ -56,63 +53,7 @@ print(np.bincount(yte))
 
 #pdb.set_trace()
 
-######## Helper Functions ###########
-def run_eval(model, Xev, yev):
-    yp = []
-    cur_loss = 0
-    cur_acc  = 0
-    model.eval()
-    for step in range((Xev.shape[0] + batch_size - 1) // batch_size):
-        x = torch.from_numpy(Xev[step * batch_size : (step + 1) * batch_size]).float().to(device)
-        y = torch.from_numpy(yev[step * batch_size : (step + 1) * batch_size]).to(device)
-        with torch.no_grad():
-            y_pred = model(x)
-        yp.append(y_pred.cpu().numpy())
-        cur_loss += obj(y_pred, y).item()
-        cur_acc  += np.sum((y_pred.max(dim=1)[1] == y).cpu().numpy())
-    return np.argmax(np.vstack(yp), -1), cur_loss / Xev.shape[0], cur_acc / Xev.shape[0]
-
-def metrics(hist, pte):
-    # https://matplotlib.org/gallery/images_contours_and_fields/image_annotated_heatmap.html
-    fig, (ax1, ax2, axc) = plt.subplots(1,3,figsize=(18, 6))
-
-    ax1.plot(range(epochs), hist['TrLoss'], 'ro-', label='Training')
-    ax1.plot(range(epochs), hist['VaLoss'], 'bo-', label='Validation')
-    ax1.legend()
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('Training Loss')
-
-    ax2.plot(range(epochs), hist['TrAcc'], 'ro-', label='Training')
-    ax2.plot(range(epochs), hist['VaAcc'], 'bo-', label='Validation')
-    ax2.legend()
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Accuracy')
-    ax2.set_title('Training Accuracy')
-
-    conf_te = confusion_matrix(yte, pte)
-    im = axc.imshow(np.log(1 + conf_te), cmap='jet')
-    axc.set_xticks(range(num_classes))
-    axc.set_yticks(range(num_classes))
-    axc.set_xticklabels(classes)
-    axc.set_yticklabels(classes)
-    plt.setp(axc.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
-    for i in range(num_classes):
-        for j in range(num_classes):
-            text = axc.text(j,i,conf_te[i,j], ha='center', va='center', color='w')
-    axc.set_title('Confusion Matrix')
-    axc.grid(False)
-
-    fig.tight_layout()
-    plt.show()
-
-def lrf(epoch):
-    ''' Cosine Annealing: https://arxiv.org/pdf/1608.03983.pdf '''
-    jumps = [0, 20, 50, 100]
-    for i in range(1, len(jumps)):
-        if epoch < jumps[i]: return (1 + np.cos(np.pi * (epoch - jumps[i-1]) / (jumps[i] - jumps[i-1]))) / 2
-    return 1e-6
-plt.plot(np.arange(100), np.vectorize(lrf)(np.arange(100)))
+plt.plot(np.arange(100), np.vectorize(a2i_helper.lrf)(np.arange(100)))
 # from IPython import embed
 # embed()
 # exit()
@@ -171,14 +112,14 @@ epochs = 100
 batch_size = 256
 iters  = (Xtr.shape[0] + batch_size - 1) // batch_size
 
-v = 2
+v = 13
 model_F_file = model_dir + 'save_%03d.pt'%v
 
 lr = 1e-3
 model = Net(Xtr.shape[1:]).to(device)
 obj = nn.CrossEntropyLoss(reduction='sum')
 opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.0, amsgrad=True)
-scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lrf)
+scheduler = torch.optim.lr_scheduler.LambdaLR(opt, a2i_helper.lrf)
 
 best_acc = 0
 hist = {'TrLoss':[], 'TrAcc':[], 'VaLoss':[], 'VaAcc':[]}
@@ -220,7 +161,7 @@ for epoch in range(epochs):
 #            p.data.add_(-lr, p.grad.data)
         #pdb.set_trace()
     
-    _, loss, acc = run_eval(model, Xva, yva)
+    _, loss, acc = a2i_helper.run_eval(model, Xva, yva, batch_size, device, obj)
     if acc > best_acc:
         best_acc = acc
         cur_best = True
@@ -235,12 +176,12 @@ for epoch in range(epochs):
 
 
 model.load_state_dict(torch.load(model_F_file))
-pte, loss, acc = run_eval(model, Xte, yte)
+pte, loss, acc = a2i_helper.run_eval(model, Xte, yte, batch_size, device, obj)
 print('TeLoss %.4f - TeAcc %.4f'%(loss, acc))
 
 print()
 print('Data version ---- %s'%data_version)
 print('Saved in -------- %s'%model_F_file)
 print('Results --------- F%.2f%% - T%.2f%%'%(100*best_acc, 100*acc))
-metrics(hist, pte)
+a2i_helper.metrics(hist, pte, yte, classes, epochs)
 

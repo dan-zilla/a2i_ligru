@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 import os, sys, pdb, pickle
 from multiprocessing import Pool
 import numpy as np
+import numpy.matlib
 import scikits.samplerate as samplerate
 import scipy.io.wavfile as wav
 import scipy.signal as sig
@@ -13,13 +14,14 @@ np.seterr(all='raise')
 # from sets import Set
 
 # INPUT DIRECTORIES
-train_data_dir = '/data/workspace/danvilla/speech_commands_v0.01/'
+# train_data_dir = '/data/workspace/danvilla/speech_commands/speech_commands_v0.01_tdmodels/'
+train_data_dir = '/data/workspace/danvilla/speech_commands/chip16_spectrograms/'
 test_data_dir = '../test_real/'
 sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
-data_folder = '../outfiles_td/'
-data_version = 'processed-mlab_tdfilt_tdmix_abs'
+data_folder = '../outfiles_chip/'
+data_version = 'processed-mlab_chip16_arduino'
 
 #### Standard Spectrogram #####
 fnames = [
@@ -49,6 +51,9 @@ frame_stride = 0.01
 frame_length, frame_step = frame_size * sample_rate, frame_stride * sample_rate  # Convert from seconds to samples
 frame_length = int(round(frame_length))
 frame_step = int(round(frame_step))
+
+frame_duration = 1 # for now, we'll force all spectrograms to be exactly 1 sec long
+num_frames =  (frame_duration / frame_stride) - 2
 
 NFFT = 512
 nfilt = 32
@@ -90,14 +95,40 @@ def get_random_background():
 ######### Import Data From CSV ###########
 def conv_csv_to_img(filename):
     spectrogram = []
+    # num_frames = int(np.ceil(float(np.abs(signal_length - frame_length)) / frame_step))  # Make sure that we have at least 1 frame
     if '\0' in open(filename).read():
         print("wtf " + filename)
     with open(filename, 'rt') as csv_file:
         csv_obj = csv.reader(csv_file)
         for row in csv_obj:
             spectrogram.append(row)
+    # add columns to make frames all be same length
+    extra_frames = int(round(len(spectrogram[0]) - num_frames))
     spectrogram = (np.array(spectrogram)).astype('f4')
+    # if (extra_frames < -20):
+    #     print("short clip")
+    if (extra_frames < 0):
+        spectrogram = np.append(spectrogram, np.matlib.repmat(spectrogram[:,-1],-extra_frames,1).T + 3*(2*np.random.random((spectrogram.shape[0],-extra_frames))-1), axis=1) # add 3dB of noise to the
+    elif (extra_frames > 0):
+        spectrogram = spectrogram[:,0:num_frames]
+
     return spectrogram.astype('f4')
+
+
+def conv_csv_to_img_aug(data):
+    # Get the features
+    img = conv_csv_to_img(data)
+
+    # Frequency shifting
+    # orig_shape = img.shape
+    fshift = np.random.randint(-2, 3)
+    if fshift < 0:
+        std = np.std(img[-4:], 0)
+        img = np.vstack([img[-fshift:], img[-1] + std * np.random.randn(-fshift, img.shape[-1])])
+    if fshift > 0:
+        std = np.std(img[:4], 0)
+        img = np.vstack([img[0] + std * np.random.randn(fshift, img.shape[-1]), img[:-fshift]])
+    return img.astype('f4')
 
 plt.figure(figsize=(20, 12))
 for i in range(6):
@@ -124,8 +155,11 @@ for fname in tests_raw:
     te[fsplit[0]].add(fsplit[1])
 
 size_multiplier = 5
-unknown = ['seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
-classes = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', 'unknown', 'silent']
+unknown = ['off', 'on', 'right', 'stop', 'up', 'down', 'go', 'left', 'seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
+# unknown = ['unknown', 'yes', 'stop', 'no', 'go', 'seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
+# classes = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', 'unknown', 'silent']
+# classes = ['down',  'left', 'off', 'on', 'right', 'up', 'silent']
+classes = ['no', 'yes', 'unknown', 'silent']
 
 def get_train(x):
     i, fname = x
@@ -247,7 +281,7 @@ if __name__ == "__main__":
                 yva.append(i)
             print()
             for ix, fname in enumerate(fnames_te):
-                print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
+                print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')#[i]*len(xsf)
                 Xte.append(conv_csv_to_img(train_data_dir + '%s/%s'%(c, fname)))
                 yte.append(i)
             print()

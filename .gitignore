@@ -1,0 +1,6 @@
+*.pdf
+*.npy
+*.pkl
+*.png
+*.pt
+.ipynb
