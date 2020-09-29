@@ -1,0 +1,28 @@
+-----------------------------------------------------
+Classifier trained on: 29-Jun-2020 17:47:58
+Hostname: murmann-ml
+
+-----------------------------------------------------
+{Operation terminated by user during <a href="matlab:matlab.internal.language.introspective.errorDocCallback('parallel.internal.settings.SettingsNodeFacade>iSetSingleKeyAtLevel', '/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m', 739)" style="font-weight:bold">parallel.internal.settings.SettingsNodeFacade>iSetSingleKeyAtLevel</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m',739,0)">line 739</a>)
+
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('parallel.internal.settings.SettingsNodeFacade/setKeys', '/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m', 197)" style="font-weight:bold">parallel.internal.settings.SettingsNodeFacade/setKeys</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m',197,0)">line 197</a>)
+                    iSetSingleKeyAtLevel(obj.SettingsNode, currName, currValue, currLevel);
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('parallel.internal.settings.SettingsNodeFacade/setKey', '/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m', 172)" style="font-weight:bold">parallel.internal.settings.SettingsNodeFacade/setKey</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/SettingsNodeFacade.m',172,0)">line 172</a>)
+            obj.setKeys({name}, {value}, level);
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('parallel.internal.settings.CustomSettingsGetSet/hSetPropertyNoCheck', '/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/CustomSettingsGetSet.m', 257)" style="font-weight:bold">parallel.internal.settings.CustomSettingsGetSet/hSetPropertyNoCheck</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/CustomSettingsGetSet.m',257,0)">line 257</a>)
+            obj.NodeFacade.setKey(prop, value, level);
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('parallel.internal.settings.CustomSettingsGetSet/hSetProperty', '/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/CustomSettingsGetSet.m', 236)" style="font-weight:bold">parallel.internal.settings.CustomSettingsGetSet/hSetProperty</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/parallel/cluster/+parallel/+internal/+settings/CustomSettingsGetSet.m',236,0)">line 236</a>)
+                obj.hSetPropertyNoCheck(prop, value, level);
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('featurize_dir', '/home/danvilla/atclassifier/matlab/featurize_dir.m', 5)" style="font-weight:bold">featurize_dir</a> (<a href="matlab: opentoline('/home/danvilla/atclassifier/matlab/featurize_dir.m',5,0)">line 5</a>)
+    ps.Pool.AutoCreate = false;
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('train_classifier', '/home/danvilla/atclassifier/matlab/train_classifier.m', 55)" style="font-weight:bold">train_classifier</a> (<a href="matlab: opentoline('/home/danvilla/atclassifier/matlab/train_classifier.m',55,0)">line 55</a>)
+    [windows, labels, ~, ~] = featurize_dir(P.orig_sound_folder,P,P.pct_file,P.noise_file,P.dBN);
+In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('run_classifier_babycry', '/home/danvilla/atclassifier/matlab/run_classifier_babycry.m', 45)" style="font-weight:bold">run_classifier_babycry</a> (<a href="matlab: opentoline('/home/danvilla/atclassifier/matlab/run_classifier_babycry.m',45,0)">line 45</a>)
+            [~, i_feat] = train_classifier(P,true,false);} 
+run_classifier_babycry
+[Warning: Name is nonexistent or not a directory:
+/home/danvilla/a2i_ligru/google_voice/outfiles_chip/McDermott/Sound_Texture_Synthesis_Toolbox] 
+[> In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('path', '/usr/local/MATLAB/R2019b/toolbox/matlab/general/path.m', 109)" style="font-weight:bold">path</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/matlab/general/path.m',109,0)">line 109</a>)
+  In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('addpath', '/usr/local/MATLAB/R2019b/toolbox/matlab/general/addpath.m', 86)" style="font-weight:bold">addpath</a> (<a href="matlab: opentoline('/usr/local/MATLAB/R2019b/toolbox/matlab/general/addpath.m',86,0)">line 86</a>)
+  In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('classification_parameters', '/home/danvilla/atclassifier/matlab/classification_parameters.m', 140)" style="font-weight:bold">classification_parameters</a> (<a href="matlab: opentoline('/home/danvilla/atclassifier/matlab/classification_parameters.m',140,0)">line 140</a>)
+  In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('run_classifier_babycry', '/home/danvilla/atclassifier/matlab/run_classifier_babycry.m', 5)" style="font-weight:bold">run_classifier_babycry</a> (<a href="matlab: opentoline('/home/danvilla/atclassifier/matlab/run_classifier_babycry.m',5,0)">line 5</a>)] 

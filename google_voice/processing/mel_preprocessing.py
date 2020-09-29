@@ -6,18 +6,23 @@ import scikits.samplerate as samplerate
 import scipy.io.wavfile as wav
 import scipy.signal as sig
 import matplotlib.pyplot as plt
+import a2i_helper as a2i
 np.seterr(all='raise')
 
 # from sets import Set
 
 # INPUT DIRECTORIES
 train_data_dir = '/data/speech_commands_v0.01/'
-test_data_dir = '../test_real/'
+test_data_dir = '../test/'
 sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
 data_folder = '../outfiles/'
-data_version = 'processed-12_mel_noiseless_5bit_quant_env_64p0rms'
+rms = [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4]
+rms = [1.6]
+bits = [2, 3, 10]
+bits = [10]
+data_version = 'processed-12_mel_noiseless_larger'
 
 #### Standard Spectrogram #####
 fnames = [
@@ -69,20 +74,28 @@ for m in range(1, nfilt + 1):
         fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
 
 # Automatic Gain Control
-TARGET_RMS = 64.0 # of full-scale = 1
+TARGET_RMS = 3.2 # of full-scale = 1
+MAX_GAIN = 1000
 NORM_RMS = True
-B = 5 # quantization bits
+B = 6 # quantization bits
 QUANT_FILT = True
 QUANT_SIG = False
 def conv_wav_to_img(data):
+    '''
+    Assumes data is in the [-1,1] range (from wav read)
+    '''
     data = data[:sample_rate].astype('f4')
-    if len(data) < fs: data = np.pad(data, ((0, fs - len(data))), 'edge')
+    data -= np.mean(data)
+    data_rms = np.sqrt(np.sum(data ** 2 / len(data))) + np.finfo(float).eps
+    gain = min((TARGET_RMS / data_rms), MAX_GAIN) if NORM_RMS else 1
+
+    if len(data) < fs: data = np.pad(data, (0, fs - len(data)), 'edge')
     
     signal_length = len(data)
     num_frames = int(np.ceil(float(np.abs(signal_length - frame_length)) / frame_step))  # Make sure that we have at least 1 frame
 
     pad_signal_length = num_frames * frame_step + frame_length
-    z = np.zeros((pad_signal_length - signal_length))
+    z = np.finfo(float).eps * np.ones((pad_signal_length - signal_length))
     pad_signal = np.append(data, z) # Pad Signal to make sure that all frames have equal number of samples without truncating any samples from the original signal
 
     indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
@@ -94,27 +107,12 @@ def conv_wav_to_img(data):
     if QUANT_FILT:
         quant_frames = np.finfo(float).eps * np.ones(((fft_frames.shape[1] - 1) * 2, nfilt, fft_frames.shape[0]))
         quant_pow_frames = np.zeros((fft_frames.shape[0], nfilt))
-        bins = ((2 / 2 ** B) * np.arange(0, 2 ** B)) - 1
+
         for i in range(fft_frames.shape[0]):
             filt_frame_fft = NFFT * fft_frames[i,:] * fbank
             filt_frame = np.fft.irfft(filt_frame_fft)
-            mean_frame = np.mean(sum(filt_frame))
-            quant_filt_frame = (2 / 2 ** B) * np.digitize(filt_frame.T, bins) - 1
-            mean_quant = np.mean(quant_filt_frame, axis=0)
-            quant_frames[:, :, i] = quant_filt_frame - mean_quant + mean_frame # maintain the mean (to avoid a biased estimator?)
-            # ------------------------# for debug
-            # x = quant_filt_frame
-            # y = quant_frames[:, :, i] # for debug
-            # z = filt_frame
-            # x_reconstructed = sum(x.T)
-            # y_reconstructed = sum(y.T)
-            # z_reconstructed = sum(z)
-            # plt.figure()
-            # plt.plot(x_reconstructed)
-            # plt.plot(y_reconstructed)
-            # plt.plot(z_reconstructed)
-            # plt.plot(frames[i, :])
-            # -----------------------#
+            quant_frames[:, :, i] = a2i.quantize_with_gain(filt_frame, B, gain)
+
             quant_frame_fft = np.fft.rfft(quant_frames[:, :, i], axis=0) / NFFT
             quant_pow_frames[i,:] = np.sum((np.absolute(quant_frame_fft))**2, 0)
         filter_banks = quant_pow_frames
@@ -135,9 +133,8 @@ def get_wav(file):
     waveform_int = wav.read(file)[1] # / 2**15
     # clip_rms = np.sqrt(np.sum(waveform**2) / len(waveform))
     # waveform = target_rms / clip_rms * waveform
-    # waveform = np.bitwise_and(waveform, 0b1111111100000000, dtype=np.int16) # https://stackoverflow.com/questions/47762432/fast-way-to-quantize-numpy-vectors
+    # https://stackoverflow.com/questions/47762432/fast-way-to-quantize-numpy-vectors
     waveform = (waveform_int & -0b100000) / 2**15 if QUANT_SIG else waveform_int / 2 ** 15 # TODO: make this programmatic with B
-    waveform = (waveform / np.sqrt(np.sum(waveform ** 2 / len(waveform))) * TARGET_RMS) if NORM_RMS else waveform
     return waveform
 
 
@@ -147,6 +144,7 @@ for i in range(6):
     plt.subplot(3,2,i+1)
     plt.imshow(conv_wav_to_img(get_wav(train_data_dir + fnames[i])), interpolation='nearest', origin='lower')
     plt.title('Mel ' + fnames[i])
+plt.savefig('spectrograms.pdf')
 plt.show()
 
 ######## Background Noise for Data Augmentation #######
@@ -236,7 +234,8 @@ def get_unknown(x):
     i, fname = x
     print('\rOn %d'%(i+1), end='')
     sys.stdout.flush()
-    pcur = size_multiplier / 20
+    # pcur = size_multiplier / 20
+    pcur = 1
     xs = []
     if np.random.uniform() > pcur: return xs
     waveform = get_wav(fname)
@@ -258,113 +257,119 @@ def get_silent(i):
 
 if __name__ == "__main__":
     pool = Pool(12)
-    Xtr = []
-    Xva = []
-    Xte = []
-    ytr = []
-    yva = []
-    yte = []
-    for i,c in enumerate(classes):
-        print('Processing "%s"'%c)
-        if c == 'unknown':
-            for cl in unknown:
-                print('\tProcessing "%s"'%cl)
-                all_fnames = os.listdir(train_data_dir + cl)
-                fnames_tr = []
-                fnames_va = []
-                fnames_te = []
-                for fname in all_fnames:
-                    fhash = fname.split('_')[0]
-                    if fhash in va[cl]: fnames_va.append(fname)
-                    elif fhash in te[cl]: fnames_te.append(fname)
-                    else: fnames_tr.append(fname)
-                
-                print('On Training (total %d)'%(len(fnames_tr)))
-                sys.stdout.flush()
-                xsa = pool.map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(cl, fname), fnames_tr)))
-                # xsa = map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s' % (cl, fname), fnames_tr)))
-                xsf = [x for xs in xsa for x in xs]
-                Xtr += xsf
-                ytr += [i] * len(xsf)
-                print()
-                for ix, fname in enumerate(fnames_va):
-                    print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
-                    if np.random.uniform() > 1/20: continue
-                    Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
-                    yva.append(i)
-                print()
-                for ix, fname in enumerate(fnames_te):
-                    print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
-                    if np.random.uniform() > 1/20: continue
-                    Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
-                    yte.append(i)
-                print()
-        elif c == 'silent':
-            ltr = len(Xtr) // 11
-            lva = len(Xva) // 11
-            lte = len(Xte) // 11
-            print('On Training (total %d)'%(ltr))
-            sys.stdout.flush()
-            xsa = pool.map(get_silent, range(ltr))
-            xsf = [x for xs in xsa for x in xs]
-            Xtr += xsf
-            ytr += [i] * len(xsf)
-            print()
-            for j in range(lva):
-                print('\rOn validation %d/%d    '%(j+1,lva), end='')
-                Xva.append(conv_wav_to_img(get_random_background()))
-                yva.append(i)
-            print()
-            for j in range(lte):
-                print('\rOn testing %d/%d       '%(j+1,lte), end='')
-                Xte.append(conv_wav_to_img(get_random_background()))
-                yte.append(i)
-            print()
-        else:
-            all_fnames = os.listdir(train_data_dir + c)
-            fnames_tr = []
-            fnames_va = []
-            fnames_te = []
-            for fname in all_fnames:
-                fhash = fname.split('_')[0]
-                if fhash in va[c]: fnames_va.append(fname)
-                elif fhash in te[c]: fnames_te.append(fname)
-                else: fnames_tr.append(fname)
+    for k in rms:
+        TARGET_RMS = k
+        for j in bits:
+            B = j
+            # data_version = 'processed-12_mel_noiseless_'+str(B)+'bit_quant_env_'+str(TARGET_RMS).replace('.','p')+'rms'
+            Xtr = []
+            Xva = []
+            Xte = []
+            ytr = []
+            yva = []
+            yte = []
+            for i,c in enumerate(classes):
+                print('Processing "%s"'%c)
+                if c == 'unknown':
+                    for cl in unknown:
+                        print('\tProcessing "%s"'%cl)
+                        all_fnames = os.listdir(train_data_dir + cl)
+                        fnames_tr = []
+                        fnames_va = []
+                        fnames_te = []
+                        for fname in all_fnames:
+                            fhash = fname.split('_')[0]
+                            if fhash in va[cl]: fnames_va.append(fname)
+                            elif fhash in te[cl]: fnames_te.append(fname)
+                            else: fnames_tr.append(fname)
 
-            print('On Training (total %d)'%(size_multiplier * len(fnames_tr)))
-            sys.stdout.flush()
-            xsa = pool.map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
-            # xsa = map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
-            xsf = [x for xs in xsa for x in xs]
-            Xtr += xsf
-            ytr += [i] * len(xsf)
-            print()
-            for ix, fname in enumerate(fnames_va):
-                print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
-                Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
-                yva.append(i)
-            print()
-            for ix, fname in enumerate(fnames_te):
-                print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
-                Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
-                yte.append(i)
-            print()
-        print()
+                        print('On Training (total %d)'%(len(fnames_tr)))
+                        sys.stdout.flush()
+                        # xsa = pool.map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(cl, fname), fnames_tr)))
+                        xsa = map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s' % (cl, fname), fnames_tr)))
+                        xsf = [x for xs in xsa for x in xs]
+                        Xtr += xsf
+                        ytr += [i] * len(xsf)
+                        print()
+                        for ix, fname in enumerate(fnames_va):
+                            print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
+                            if np.random.uniform() > 1/20: continue
+                            Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
+                            yva.append(i)
+                        print()
+                        for ix, fname in enumerate(fnames_te):
+                            print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
+                            if np.random.uniform() > 1/20: continue
+                            Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(cl, fname))))
+                            yte.append(i)
+                        print()
+                elif c == 'silent':
+                    ltr = len(Xtr) // 11
+                    lva = len(Xva) // 11
+                    lte = len(Xte) // 11
+                    print('On Training (total %d)'%(ltr))
+                    sys.stdout.flush()
+                    # xsa = pool.map(get_silent, range(ltr))
+                    xsa = map(get_silent, range(ltr))
+                    xsf = [x for xs in xsa for x in xs]
+                    Xtr += xsf
+                    ytr += [i] * len(xsf)
+                    print()
+                    for j in range(lva):
+                        print('\rOn validation %d/%d    '%(j+1,lva), end='')
+                        Xva.append(conv_wav_to_img(get_random_background()))
+                        yva.append(i)
+                    print()
+                    for j in range(lte):
+                        print('\rOn testing %d/%d       '%(j+1,lte), end='')
+                        Xte.append(conv_wav_to_img(get_random_background()))
+                        yte.append(i)
+                    print()
+                else:
+                    all_fnames = os.listdir(train_data_dir + c)
+                    fnames_tr = []
+                    fnames_va = []
+                    fnames_te = []
+                    for fname in all_fnames:
+                        fhash = fname.split('_')[0]
+                        if fhash in va[c]: fnames_va.append(fname)
+                        elif fhash in te[c]: fnames_te.append(fname)
+                        else: fnames_tr.append(fname)
 
-    # Final processing, shuffling, saving.
-    shuffle = np.arange(len(Xtr))
-    np.random.shuffle(shuffle)
-    Xtr = (np.array(Xtr).astype('f4'))[shuffle]
-    ytr = np.array(ytr)[shuffle]
-    Xva = np.array(Xva).astype('f4')
-    yva = np.array(yva)
-    Xte = np.array(Xte).astype('f4')
-    yte = np.array(yte)
-    with open(data_folder + data_version + '_Xtr.npy', 'wb') as f:
-        np.save(f, Xtr)
-    with open(data_folder + data_version + '_Xva.npy', 'wb') as f:
-        np.save(f, Xva)
-    with open(data_folder + data_version + '_Xte.npy', 'wb') as f:
-        np.save(f, Xte)
-    with open(data_folder + data_version + '_ys.pkl', 'wb') as f:
-        pickle.dump((ytr, yva, yte, classes), f)
+                    print('On Training (total %d)'%(size_multiplier * len(fnames_tr)))
+                    sys.stdout.flush()
+                    # xsa = pool.map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
+                    xsa = map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
+                    xsf = [x for xs in xsa for x in xs]
+                    Xtr += xsf
+                    ytr += [i] * len(xsf)
+                    print()
+                    for ix, fname in enumerate(fnames_va):
+                        print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
+                        Xva.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
+                        yva.append(i)
+                    print()
+                    for ix, fname in enumerate(fnames_te):
+                        print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
+                        Xte.append(conv_wav_to_img(get_wav(train_data_dir + '%s/%s'%(c, fname))))
+                        yte.append(i)
+                    print()
+                print()
+
+            # Final processing, shuffling, saving.
+            shuffle = np.arange(len(Xtr))
+            np.random.shuffle(shuffle)
+            Xtr = (np.array(Xtr).astype('f4'))[shuffle]
+            ytr = np.array(ytr)[shuffle]
+            Xva = np.array(Xva).astype('f4')
+            yva = np.array(yva)
+            Xte = np.array(Xte).astype('f4')
+            yte = np.array(yte)
+            with open(data_folder + data_version + '_Xtr.npy', 'wb') as f:
+                np.save(f, Xtr)
+            with open(data_folder + data_version + '_Xva.npy', 'wb') as f:
+                np.save(f, Xva)
+            with open(data_folder + data_version + '_Xte.npy', 'wb') as f:
+                np.save(f, Xte)
+            with open(data_folder + data_version + '_ys.pkl', 'wb') as f:
+                pickle.dump((ytr, yva, yte, classes), f)

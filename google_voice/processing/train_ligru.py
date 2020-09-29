@@ -18,7 +18,7 @@ import torch.nn as nn
 
 import a2i_helper as a2i
 
-os.environ['CUDA_VISIBLE_DEVICES']='3'
+os.environ['CUDA_VISIBLE_DEVICES']='2'
 
 from jupyterthemes import jtplot
 jtplot.style()
@@ -28,11 +28,12 @@ batch_size = 1024
 
 device = torch.device('cuda')
 
-v = 28
+v = 34
 
-data_folder = '../outfiles/'
-data_versions = ('processed-12_mel_noiseless_5bit_quant_env_20p0rms',
-                 'processed-12_mel_noiseless_5bit_quant_env_12p8rms')
+# data_folder = '../outfiles/'
+data_folder = '../outfiles_chip/'
+# data_versions = (['processed-12_mel_noiseless_larger'])
+data_versions = (['processed-12_mel_chip16_4bit_log_quant_env_0p4rms'])
 
 class Quantize(nn.Module):
     def __init__(self):
@@ -181,7 +182,7 @@ class liGRU(nn.Module):
             else:
                 h_init = torch.zeros(x.shape[1], self.ligru_lay[i])
 
-            # Drop mask initilization (same mask for all time steps)
+            # Drop mask initialization (same mask for all time steps)
             in_size = [1] + list(x.size())[1:]
             h_size = list(h_init.size()[:2])
             if self.drop['in'][0] == 'stochastic':
@@ -234,7 +235,7 @@ class liGRU(nn.Module):
             wh_out = self.wh[i](x * drop_mask_ih)
             wz_out = self.wz[i](x * drop_mask_iz)
 
-            # Apply batch norm if needed (all steos in parallel)
+            # Apply batch norm if needed (all steps in parallel)
             if self.ligru_use_batchnorm[i]:
                 wh_out_bn = self.bn_wh[i](wh_out.view(wh_out.shape[0] * wh_out.shape[1], wh_out.shape[2]))
                 wh_out = wh_out_bn.view(wh_out.shape[0], wh_out.shape[1], wh_out.shape[2])
@@ -272,15 +273,16 @@ class Net(nn.Module):
         super(Net, self).__init__()
 
         self.in_shape = in_shape
-        self.oc = 128
-        # self.conv1 = nn.Conv2d(in_channels=1, out_channels=self.oc, kernel_size=(3,3), stride=(1,1), padding=(1,1), bias=True)
+        self.oc = 64
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=self.oc, kernel_size=(3,3), stride=(1,1), padding=(1,1), bias=True)
         self.res1 = ResLayer(in_channels=1, out_channels=32, momentum=0.05, maxpool=True)
         self.res2 = ResLayer(in_channels=32, out_channels=64, momentum=0.05, maxpool=True)
         self.res3 = ResLayer(in_channels=64, out_channels=self.oc, momentum=0.05, maxpool=False)
-        self.recur1 = liGRU(32, self.oc * self.in_shape[0] // 4, use_cuda=True)
+        self.recur1 = liGRU(64, self.oc * self.in_shape[0] // 4, use_cuda=True)
+        # self.recur1 = liGRU(64, self.oc * self.in_shape[0], use_cuda=True)
         # self.fc1 = nn.Linear(256, 256)
         # self.sdo = StochasticDropout(0.5)
-        self.fc2 = nn.Linear(32, 12)
+        self.fc2 = nn.Linear(64, 12)
 
     def forward(self, x):
         x = x.unsqueeze(1)
@@ -288,6 +290,7 @@ class Net(nn.Module):
         x = self.res3(self.res2(self.res1(x)))
         # x = self.res3(self.res2(x))
         x = x.view(-1, self.oc * self.in_shape[0] // 4, self.in_shape[1] // 4).permute(2, 0, 1).contiguous()
+        # x = x.view(-1, self.oc * self.in_shape[0], self.in_shape[1]).permute(2, 0, 1).contiguous()
         x = self.recur1(x)[-1]
         # x = x.permute(1,0,2).contiguous().view(-1,96*512) # for bidirectional
         # x = F.relu(self.fc1(x))

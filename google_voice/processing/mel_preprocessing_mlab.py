@@ -8,20 +8,34 @@ import scipy.io.wavfile as wav
 import scipy.signal as sig
 import matplotlib.pyplot as plt
 import csv
+import a2i_helper as a2i
 import pdb
 np.seterr(all='raise')
+from numpy.random import default_rng
 
 # from sets import Set
 
 # INPUT DIRECTORIES
 # train_data_dir = '/data/workspace/danvilla/speech_commands/speech_commands_v0.01_tdmodels/'
 train_data_dir = '/data/workspace/danvilla/speech_commands/chip16_spectrograms/'
+# train_data_dir = '/data/workspace/danvilla/speech_commands/speech_commands_v0.01_tdmodels/'
 test_data_dir = '../test_real/'
 sub_data_dir = '../test_sub/audio/'
 
 # OUTPUT INFORMATION
 data_folder = '../outfiles_chip/'
-data_version = 'processed-mlab_chip16_arduino'
+data_version = 'processed-mel_chip16_6bit_log_quant_env_6p4rms'
+rms = [0.8]
+bits = [9]
+# Automatic Gain Control
+TARGET_RMS = 1.0 # of full-scale = 1
+MAX_GAIN = 1000
+NORM_RMS = True
+B = 6 # quantization bits
+# QUANT_FILT = False
+QUANT_SIG = False
+rng = default_rng()
+SNR = 40 # in dB
 
 #### Standard Spectrogram #####
 fnames = [
@@ -54,26 +68,7 @@ frame_step = int(round(frame_step))
 
 frame_duration = 1 # for now, we'll force all spectrograms to be exactly 1 sec long
 num_frames =  (frame_duration / frame_stride) - 2
-
-NFFT = 512
 nfilt = 32
-lf = 0
-hf = (sample_rate / 2)
-low_freq_mel  = (2595 * np.log10(1 + lf / 700))
-high_freq_mel = (2595 * np.log10(1 + hf / 700))  # Convert Hz to Mel
-mel_points = np.linspace(low_freq_mel, high_freq_mel, nfilt + 2)  # Equally spaced in Mel scale
-hz_points = (700 * (10**(mel_points / 2595) - 1))  # Convert Mel to Hz
-bin = np.floor((NFFT + 1) * hz_points / sample_rate)
-fbank = np.zeros((nfilt, int(np.floor(NFFT / 2 + 1))))
-for m in range(1, nfilt + 1):
-    f_m_minus = int(bin[m - 1])   # left
-    f_m = int(bin[m])             # center
-    f_m_plus = int(bin[m + 1])    # right
-
-    for k in range(f_m_minus, f_m):
-        fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
-    for k in range(f_m, f_m_plus):
-        fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
 
 ######## Background Noise for Data Augmentation #######
 bg_noise = [ (train_data_dir + '_background_noise_/%s'%fname) for fname in os.listdir(train_data_dir + '_background_noise_') if fname.split('.')[-1] == 'csv' ]
@@ -111,8 +106,17 @@ def conv_csv_to_img(filename):
         spectrogram = np.append(spectrogram, np.matlib.repmat(spectrogram[:,-1],-extra_frames,1).T + 3*(2*np.random.random((spectrogram.shape[0],-extra_frames))-1), axis=1) # add 3dB of noise to the
     elif (extra_frames > 0):
         spectrogram = spectrogram[:,0:num_frames]
+    # undo dB and quantize
+    spectrogram_lin = 10 ** (spectrogram / 20)
+    data_rms = np.sqrt(np.sum(spectrogram_lin ** 2 / np.shape(spectrogram_lin[1])))
+    # noise_spectrum = np.sqrt(data_rms**2/10**(SNR/10)) * rng.standard_normal(np.shape(spectrogram_lin))
+    noise_power = data_rms**2/10**(SNR/10)
+    spectrogram_noisy = np.sqrt(spectrogram_lin**2 + noise_power)
+    gain = min((TARGET_RMS / data_rms), MAX_GAIN) if NORM_RMS else 1
+    spectrogram_noisy = 20 * np.log10(np.abs(spectrogram_noisy))
+    spectrogram = a2i.quantize_with_gain(spectrogram_noisy, B, gain, ulim=0, llim=-SNR, log_gain=True)
 
-    return spectrogram.astype('f4')
+    return spectrogram.T.astype('f4')
 
 
 def conv_csv_to_img_aug(data):
@@ -135,6 +139,7 @@ for i in range(6):
     plt.subplot(3,2,i+1)
     plt.imshow(conv_csv_to_img(train_data_dir + fnames[i]), interpolation='nearest', origin='lower')
     plt.title('Mel ' + fnames[i])
+plt.savefig('spectrograms.pdf')
 plt.show()
 
 ########## Main Code for Generating Training Dataset ##########
@@ -154,12 +159,12 @@ for fname in tests_raw:
     if fsplit[0] not in te: te[fsplit[0]] = set()
     te[fsplit[0]].add(fsplit[1])
 
-size_multiplier = 5
-unknown = ['off', 'on', 'right', 'stop', 'up', 'down', 'go', 'left', 'seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
-# unknown = ['unknown', 'yes', 'stop', 'no', 'go', 'seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
-# classes = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', 'unknown', 'silent']
+size_multiplier = 1
+# unknown = ['off', 'on', 'right', 'stop', 'up', 'down', 'go', 'left', 'seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
+unknown = ['seven', 'cat', 'four', 'three', 'zero', 'tree', 'eight', 'six', 'bird', 'one', 'two', 'five', 'house', 'marvin', 'happy', 'nine', 'bed', 'sheila', 'wow', 'dog' ]
+classes = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', 'unknown', 'silent']
 # classes = ['down',  'left', 'off', 'on', 'right', 'up', 'silent']
-classes = ['no', 'yes', 'unknown', 'silent']
+# classes = ['no', 'yes', 'unknown', 'silent']
 
 def get_train(x):
     i, fname = x
@@ -196,112 +201,117 @@ def get_silent(i):
 
 if __name__ == "__main__":
     pool = Pool(8)
-    Xtr = []
-    Xva = []
-    Xte = []
-    ytr = []
-    yva = []
-    yte = []
-    for i,c in enumerate(classes):
-        print('Processing "%s"'%c)
-        if c == 'unknown':
-            for cl in unknown:
-                print('\tProcessing "%s"'%cl)
-                all_fnames = [('%s'%fname) for fname in os.listdir(train_data_dir + cl) if fname.split('.')[-1] == 'csv']
-                fnames_tr = []
-                fnames_va = []
-                fnames_te = []
-                for fname in all_fnames:
-                    fhash = fname.split('_')[0]
-                    if fhash in va[cl]: fnames_va.append(fname)
-                    elif fhash in te[cl]: fnames_te.append(fname)
-                    else: fnames_tr.append(fname)
-                
-                print('On Training (total %d)'%(len(fnames_tr)))
-                sys.stdout.flush()
-                xsa = pool.map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(cl, fname), fnames_tr)))
-                xsf = [x for xs in xsa for x in xs]
-                Xtr += xsf
-                ytr += [i] * len(xsf)
-                print()
-                for ix, fname in enumerate(fnames_va):
-                    print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
-                    if np.random.uniform() > 1/20: continue
-                    Xva.append(conv_csv_to_img(train_data_dir + '%s/%s'%(cl, fname)))
-                    yva.append(i)
-                print()
-                for ix, fname in enumerate(fnames_te):
-                    print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
-                    if np.random.uniform() > 1/20: continue
-                    Xte.append(conv_csv_to_img(train_data_dir + '%s/%s'%(cl, fname)))
-                    yte.append(i)
-                print()
-        elif c == 'silent':
-            ltr = len(Xtr) // 11
-            lva = len(Xva) // 11
-            lte = len(Xte) // 11
-            print('On Training (total %d)'%(ltr))
-            sys.stdout.flush()
-            xsa = pool.map(get_silent, range(ltr))
-            xsf = [x for xs in xsa for x in xs]
-            Xtr += xsf
-            ytr += [i] * len(xsf)
-            print()
-            for j in range(lva):
-                print('\rOn validation %d/%d    '%(j+1,lva), end='')
-                Xva.append(get_random_background())
-                yva.append(i)
-            print()
-            for j in range(lte):
-                print('\rOn testing %d/%d       '%(j+1,lte), end='')
-                Xte.append(get_random_background())
-                yte.append(i)
-            print()
-        else:
-            all_fnames = [('%s'%fname) for fname in os.listdir(train_data_dir + c) if fname.split('.')[-1] == 'csv']
-            fnames_tr = []
-            fnames_va = []
-            fnames_te = []
-            for fname in all_fnames:
-                fhash = fname.split('_')[0]
-                if fhash in va[c]: fnames_va.append(fname)
-                elif fhash in te[c]: fnames_te.append(fname)
-                else: fnames_tr.append(fname)
+    for k in rms:
+        TARGET_RMS = k
+        for j in bits:
+            B = j
+            data_version = 'processed-12_mel_chip16_'+str(B)+'bit_log_quant_env_'+str(TARGET_RMS).replace('.','p')+'rms'
+            Xtr = []
+            Xva = []
+            Xte = []
+            ytr = []
+            yva = []
+            yte = []
+            for i,c in enumerate(classes):
+                print('Processing "%s"'%c)
+                if c == 'unknown':
+                    for cl in unknown:
+                        print('\tProcessing "%s"'%cl)
+                        all_fnames = [('%s'%fname) for fname in os.listdir(train_data_dir + cl) if fname.split('.')[-1] == 'csv']
+                        fnames_tr = []
+                        fnames_va = []
+                        fnames_te = []
+                        for fname in all_fnames:
+                            fhash = fname.split('_')[0]
+                            if fhash in va[cl]: fnames_va.append(fname)
+                            elif fhash in te[cl]: fnames_te.append(fname)
+                            else: fnames_tr.append(fname)
 
-            print('On Training (total %d)'%(size_multiplier * len(fnames_tr)))
-            sys.stdout.flush()
-            xsa = pool.map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
-            xsf = [x for xs in xsa for x in xs]
-            Xtr += xsf
-            ytr += [i] * len(xsf)
-            print()
-            for ix, fname in enumerate(fnames_va):
-                print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
-                Xva.append(conv_csv_to_img(train_data_dir + '%s/%s'%(c, fname)))
-                yva.append(i)
-            print()
-            for ix, fname in enumerate(fnames_te):
-                print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')#[i]*len(xsf)
-                Xte.append(conv_csv_to_img(train_data_dir + '%s/%s'%(c, fname)))
-                yte.append(i)
-            print()
-        print()
+                        print('On Training (total %d)'%(len(fnames_tr)))
+                        sys.stdout.flush()
+                        xsa = pool.map(get_unknown, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(cl, fname), fnames_tr)))
+                        xsf = [x for xs in xsa for x in xs]
+                        Xtr += xsf
+                        ytr += [i] * len(xsf)
+                        print()
+                        for ix, fname in enumerate(fnames_va):
+                            print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
+                            if np.random.uniform() > 1/20: continue
+                            Xva.append(conv_csv_to_img(train_data_dir + '%s/%s'%(cl, fname)))
+                            yva.append(i)
+                        print()
+                        for ix, fname in enumerate(fnames_te):
+                            print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')
+                            if np.random.uniform() > 1/20: continue
+                            Xte.append(conv_csv_to_img(train_data_dir + '%s/%s'%(cl, fname)))
+                            yte.append(i)
+                        print()
+                elif c == 'silent':
+                    ltr = len(Xtr) // 11
+                    lva = len(Xva) // 11
+                    lte = len(Xte) // 11
+                    print('On Training (total %d)'%(ltr))
+                    sys.stdout.flush()
+                    xsa = pool.map(get_silent, range(ltr))
+                    xsf = [x for xs in xsa for x in xs]
+                    Xtr += xsf
+                    ytr += [i] * len(xsf)
+                    print()
+                    for j in range(lva):
+                        print('\rOn validation %d/%d    '%(j+1,lva), end='')
+                        Xva.append(get_random_background())
+                        yva.append(i)
+                    print()
+                    for j in range(lte):
+                        print('\rOn testing %d/%d       '%(j+1,lte), end='')
+                        Xte.append(get_random_background())
+                        yte.append(i)
+                    print()
+                else:
+                    all_fnames = [('%s'%fname) for fname in os.listdir(train_data_dir + c) if fname.split('.')[-1] == 'csv']
+                    fnames_tr = []
+                    fnames_va = []
+                    fnames_te = []
+                    for fname in all_fnames:
+                        fhash = fname.split('_')[0]
+                        if fhash in va[c]: fnames_va.append(fname)
+                        elif fhash in te[c]: fnames_te.append(fname)
+                        else: fnames_tr.append(fname)
 
-    # Final processing, shuffling, saving.
-    shuffle = np.arange(len(Xtr))
-    np.random.shuffle(shuffle)
-    Xtr = (np.array(Xtr).astype('f4'))[shuffle]
-    ytr = np.array(ytr)[shuffle]
-    Xva = np.array(Xva).astype('f4')
-    yva = np.array(yva)
-    Xte = np.array(Xte).astype('f4')
-    yte = np.array(yte)
-    # pdb.set_trace()
-    with open(data_folder + data_version + '_Xtr.npy', 'wb') as f:
-        np.save(f, Xtr)
-    with open(data_folder + data_version + '_Xva.npy', 'wb') as f:
-        np.save(f, Xva)
-    with open(data_folder + data_version + '_Xte.npy', 'wb') as f:
-        np.save(f, Xte)
-    with open(data_folder + data_version + '_ys.pkl', 'wb') as f:
-        pickle.dump((ytr, yva, yte, classes), f)
+                    print('On Training (total %d)'%(size_multiplier * len(fnames_tr)))
+                    sys.stdout.flush()
+                    xsa = pool.map(get_train, enumerate(map(lambda fname: train_data_dir + '%s/%s'%(c, fname), fnames_tr)))
+                    xsf = [x for xs in xsa for x in xs]
+                    Xtr += xsf
+                    ytr += [i] * len(xsf)
+                    print()
+                    for ix, fname in enumerate(fnames_va):
+                        print('\rOn Validation %d/%d'%(ix+1,len(fnames_va)), end='')
+                        Xva.append(conv_csv_to_img(train_data_dir + '%s/%s'%(c, fname)))
+                        yva.append(i)
+                    print()
+                    for ix, fname in enumerate(fnames_te):
+                        print('\rOn Testing %d/%d'%(ix+1,len(fnames_te)), end='')#[i]*len(xsf)
+                        Xte.append(conv_csv_to_img(train_data_dir + '%s/%s'%(c, fname)))
+                        yte.append(i)
+                    print()
+                print()
+
+            # Final processing, shuffling, saving.
+            shuffle = np.arange(len(Xtr))
+            np.random.shuffle(shuffle)
+            Xtr = (np.array(Xtr).astype('f4'))[shuffle]
+            ytr = np.array(ytr)[shuffle]
+            Xva = np.array(Xva).astype('f4')
+            yva = np.array(yva)
+            Xte = np.array(Xte).astype('f4')
+            yte = np.array(yte)
+            # pdb.set_trace()
+            with open(data_folder + data_version + '_Xtr.npy', 'wb') as f:
+                np.save(f, Xtr)
+            with open(data_folder + data_version + '_Xva.npy', 'wb') as f:
+                np.save(f, Xva)
+            with open(data_folder + data_version + '_Xte.npy', 'wb') as f:
+                np.save(f, Xte)
+            with open(data_folder + data_version + '_ys.pkl', 'wb') as f:
+                pickle.dump((ytr, yva, yte, classes), f)
